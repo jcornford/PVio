@@ -1,6 +1,7 @@
 import sys
 import os
 import numpy as np
+import pandas as pd
 from PyQt4 import QtGui#,# uic
 from PyQt4.QtCore import QThread, SIGNAL
 import pyqtgraph as pg
@@ -11,21 +12,50 @@ class PVio(QtGui.QMainWindow, design.Ui_MainWindow):
     def __init__(self, parent=None):
         super(PVio, self).__init__(parent)
         self.setupUi(self)
-        #uic.loadUi('design.ui', self)
         #self.home = '/home'
+        self.data_obj = None
         self.home = '/Users/jonathan/PhD/Data/PV_dendritic_intergration/Data'
+        self.home = '/Users/jonathan/PhD/Data/PV_dendritic_intergration/Data/2016_05/2016_05_11/'
 
         self.btnBrowse.clicked.connect(self.browse_folder)
         self.load_file_btn.clicked.connect(self.load_file)
 
         self.plot_1 = self.GraphicsLayoutWidget.addPlot()
+        self.traceSelector.valueChanged.connect(self.plot_traces)
+        self.channel_selector.valueChanged.connect(self.plot_traces)
 
+        #self.treeWidget.setColumnCount(1)
+        items = []
+        for i in range(10):
+            item = QtGui.QTreeWidgetItem([str(i)])
+            for string_ in ["erfer","gergfre","erg"]:
+                item.addChild(QtGui.QTreeWidgetItem([string_]))
+            items.append(item)
+        self.treeWidget.addTopLevelItems(items)
+
+        self.treeWidget.itemSelectionChanged.connect(self.tree_selection)
+
+
+        #self.load_file('/Users/jonathan/PhD/Data/PV_dendritic_intergration/Data/2016_05/2016_05_11/2016_05_11_slice1_cell1_cf2.ASC')
+    def tree_selection(self):
+        parent = self.treeWidget.currentItem().parent()
+        if parent:
+            root = parent.text(0)
+            print(root)
+        item = self.treeWidget.currentItem().text(0)
+        print(item)
+
+    def plot_traces(self):
+        t_i = self.traceSelector.value()
+        channel = self.channel_selector.value()
+        if self.data_obj is not None:
+            if not self.holdPlot.isChecked():
+                self.plot_1.clear()
+            self.plot_1.addItem(pg.PlotCurveItem(self.data_obj[channel][:,t_i]))
 
     def browse_folder(self):
         self.listWidget.clear()
-        directory = QtGui.QFileDialog.getExistingDirectory(self, "Pick a folder",
-                                                           self.home)
-
+        directory = QtGui.QFileDialog.getExistingDirectory(self, "Pick a folder", self.home)
         if directory:
             for file_name in os.listdir(directory):
                 self.listWidget.addItem(file_name)
@@ -39,11 +69,12 @@ class PVio(QtGui.QMainWindow, design.Ui_MainWindow):
         self.loading_thread.start()
 
     def catch_data(self, data_obj):
-        print(data_obj)
-        #self.listWidget.addItem(str(data_obj))
-        print(data_obj.channel_0[:,5])
-        print(data_obj.channel_0[:,5].shape)
-        self.plot_1.addItem(pg.PlotCurveItem(data_obj.channel_0[1:, 5]))
+        self.data_obj = data_obj
+        #print(data_obj)
+        #print(data_obj.channel_0[:,5])
+        #print(data_obj.channel_0[:,5].shape)
+        self.plot_traces()
+
     def done(self):
         QtGui.QMessageBox.information(self, "Done!", "Done loading!")
 
@@ -66,45 +97,24 @@ class LoadFileThread(QThread):
         self.emit(SIGNAL('catch_data(PyQt_PyObject)'), self.data_obj)
 
 class LabViewDATFile():
-    def __init__(self, filename, channel_number):
-            #start = time.time()
+    def __init__(self, filename, channel_number = 4):
             self.filename  = filename
             self.channel_number = channel_number
-            try:
-                self.data = np.loadtxt(self.filename,dtype = 'float', skiprows = 1)
-                self.data = np.transpose(self.data)
-                self.data = self.data[:-1,:] # we need to remove the last value of the data as there is one less timescale value, this is a hack though
-                self.time = np.loadtxt(self.filename,dtype = str, skiprows = 0)
-            except Exception:
-                print('Error loading file')
+            self.channel_dict = {}
+            self.load_data()
 
-            try:
-                self.time = self.time[0,1:] # slice to remove 'time' string and other datapoints.
-                self.timescale = self.time.astype('float')
-                #self.timescale = [float(s) for s in self.time]
+    def __getitem__(self, item):
+        return self.channel_dict[item]
 
-                #print(self.timescale[-1], 'ms is the last timepoint.')
-                #print('There are',len(self.timescale), 'time-points in this timescale.')
-            except Exception:
-                print('Something went wrong with the timescale conversion')
-
-            #print(self.data.shape, 'is the data shape') # axis 0 = down, 1 = across, 2 = 3d.
-            self.trial_number = (self.data.shape[1]/self.channel_number)
-            #print('A', self.trial_number, 'sweep data-set has been loaded.')
-            if self.channel_number == 4:
-                self.channel_0 = self.data[:,0::4]
-                self.channel_1 = self.data[:,1::4]
-                self.channel_2 = self.data[:,2::4]
-                self.channel_3 = self.data[:,3::4]
-                self.data_matrix = np.dstack((self.channel_0,self.channel_1,self.channel_2,self.channel_3))
-
-            elif self.channel_number == 2:
-                self.channel_0 = self.data[:,0::2]
-                self.channel_1 = self.data[:,1::2]
-                self.data_matrix = np.dstack((self.channel_0,self.channel_1))
-
-            else:
-                print('Unsupported number of channels entered')
+    def load_data(self):
+            with open(self.filename) as f:
+                ncols = len(f.readline().split('\t'))
+            data = pd.read_table(self.filename, index_col=False,  header= None,
+                                 dtype=np.float, usecols= range(2, ncols), engine = 'c',
+                                 low_memory=False, na_filter=False).values.T
+            self.time = data[:,0]
+            for i in range(self.channel_number):
+                self.channel_dict[i] = data[:, i+1::self.channel_number]
 
 def main():
     app = QtGui.QApplication(sys.argv)
